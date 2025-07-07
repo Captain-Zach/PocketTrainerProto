@@ -1,0 +1,9 @@
+beautifulsoup4
+tkinterPdfViewer
+PyMuPDF
+Pillow
+EbookLib
+transformers
+torch
+accelerate
+timm
