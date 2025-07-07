@@ -78,8 +78,14 @@ class TrainerBaseApp:
         self.ask_button = tk.Button(llm_frame, text="Ask", command=self.ask_llm)
         self.ask_button.pack(pady=5)
 
+        # --- Bottom Buttons ---
+        bottom_frame = tk.Frame(self.left_frame)
+        bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
 
-        tk.Button(self.left_frame, text="Exit", command=self.root.destroy).pack(side=tk.BOTTOM, pady=20)
+        self.inspect_button = tk.Button(bottom_frame, text="Inspect Context", command=self.open_context_inspector)
+        self.inspect_button.pack(side=tk.LEFT, padx=5)
+
+        tk.Button(bottom_frame, text="Exit", command=self.root.destroy).pack(side=tk.RIGHT, padx=5)
 
 
         # Right column (book viewer)
@@ -88,6 +94,22 @@ class TrainerBaseApp:
 
         # Initialize the LLM
         self.initialize_llm()
+
+    def open_context_inspector(self):
+        """
+        Opens a new window to inspect and edit the context that will be sent to the LLM.
+        """
+        inspector_window = tk.Toplevel(self.root)
+        inspector_window.title("Context Inspector")
+        inspector_window.geometry("600x800")
+        
+        tk.Label(inspector_window, text="This window will show the full context sent to the LLM.").pack(padx=10, pady=10)
+        
+        # We will add the detailed text boxes here in the next step.
+        
+        inspector_window.transient(self.root) # Keep window on top
+        inspector_window.grab_set() # Modal behavior
+        self.root.wait_window(inspector_window) # Wait until closed
 
     def initialize_llm(self):
         self.add_to_chat("Initializing LLM... This may take a moment.")
