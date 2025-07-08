@@ -7,17 +7,28 @@ class NativeEpubViewer(tk.Frame):
     A custom widget to display EPUB content using a native Tkinter Text widget.
     It parses a subset of HTML and applies formatting.
     """
-    def __init__(self, master, *args, **kwargs):
+    def __init__(self, master, selection_callback=None, *args, **kwargs):
         super().__init__(master, *args, **kwargs)
+        self._selection_callback = selection_callback
 
         self.text = scrolledtext.ScrolledText(self, wrap=tk.WORD, padx=10, pady=10, borderwidth=0, highlightthickness=0)
         self.text.pack(fill=tk.BOTH, expand=True)
         
-        # Make the widget read-only for the user
-        self.text.config(state=tk.DISABLED)
+        # Make the widget read-only by intercepting key presses, but allow selection
+        self.text.bind("<Key>", lambda e: "break")
+        self.text.bind("<ButtonRelease-1>", self._on_selection_end)
 
         self._configure_tags()
         self._link_callback = None
+
+    def _on_selection_end(self, event):
+        """
+        Called when the user releases the mouse button. If text is selected,
+        it triggers the selection callback.
+        """
+        selected_text = self.get_selected_text()
+        if selected_text and self._selection_callback:
+            self._selection_callback(selected_text)
 
     def _configure_tags(self):
         """Defines the text styles for various HTML tags."""
@@ -68,7 +79,15 @@ class NativeEpubViewer(tk.Frame):
         soup = BeautifulSoup(html_content, 'html.parser')
         self._parse_node(soup.body)
 
-        self.text.config(state=tk.DISABLED)
+    def get_selected_text(self):
+        """
+        Returns the currently selected text in the widget.
+        """
+        try:
+            return self.text.get(tk.SEL_FIRST, tk.SEL_LAST)
+        except tk.TclError:
+            # This error occurs if no text is selected
+            return ""
 
     def _parse_node(self, node):
         """

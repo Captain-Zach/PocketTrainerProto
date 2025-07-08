@@ -39,6 +39,9 @@ local_models/
 # Source documents (e.g., PDFs, EPUBs)
 DocSource/
 
+# Database storage
+chroma_storage/
+
 # OS-specific
 .DS_Store
 Thumbs.db
