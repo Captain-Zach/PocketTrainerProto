@@ -7,4 +7,5 @@ transformers
 torch
 accelerate
 timm
-watchdog
+chromadb
+pytest

@@ -7,7 +7,10 @@ import os
 import sys
 from Scripts.epub_analyzer import analyze_epub
 from native_viewer import NativeEpubViewer
+import re
+from bs4 import BeautifulSoup
 from llm_handler import LLMHandler
+from db_handler import DBHandler
 
 class TrainerBaseApp:
     def __init__(self, root):
@@ -25,8 +28,9 @@ class TrainerBaseApp:
         self.epub_chapter_index = 0
         self.href_map = {}
 
-        # LLM Handler
+        # LLM and DB Handlers
         self.llm_handler = None
+        self.db_handler = None # Will be initialized when a book is chosen
 
         # LLM Context State
         self.system_prompt = "You are an expert AI Tutor. Your goal is to guide the user through the provided document context..."
@@ -172,17 +176,124 @@ class TrainerBaseApp:
         button_frame = tk.Frame(inspector_window)
         button_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
         
-        tk.Button(button_frame, text="Send to LLM", command=lambda: self.ask_llm_from_inspector(inspector_window)).pack(side=tk.RIGHT, padx=5)
+        tk.Button(button_frame, text="Send to LLM", command=lambda: self.ask_llm_from_inspector(
+            inspector_window,
+            system_prompt_text.get("1.0", tk.END),
+            user_notes_text.get("1.0", tk.END)
+        )).pack(side=tk.RIGHT, padx=5)
         tk.Button(button_frame, text="Close", command=inspector_window.destroy).pack(side=tk.RIGHT)
 
         inspector_window.transient(self.root)
         inspector_window.grab_set()
         self.root.wait_window(inspector_window)
 
-    def ask_llm_from_inspector(self, window):
-        # This is a placeholder for now. We will implement the logic to
-        # gather text from the inspector window and send it to the LLM.
-        print("Sending prompt from inspector...")
+    def _truncate_text(self, text, tokenizer, max_tokens):
+        """Truncates text to a maximum number of tokens."""
+        tokens = tokenizer.encode(text)
+        if len(tokens) > max_tokens:
+            truncated_tokens = tokens[:max_tokens]
+            return tokenizer.decode(truncated_tokens, skip_special_tokens=True) + "..."
+        return text
+
+    def _build_master_prompt(self, user_input, tokenizer):
+        """Builds the complete prompt string from all context sources, managing token limits."""
+        
+        # Define the token budget
+        CONTEXT_BUDGET = 7680 # 8192 total, with a 512 buffer for the response
+        
+        # --- 1. Calculate Fixed Costs ---
+        # These are the parts of the prompt that are always included.
+        fixed_template = f"""# SYSTEM PROMPT
+{self.system_prompt}
+---
+# CONTEXT BLOCK
+## [Relevant Prior Knowledge (from already_covered_db)]
+{{retrieved_doc_context}}
+## [User-Selected Text]
+{{user_selected_text}}
+## [Relevant Current Insights (from current_chapter_insights_db)]
+{{current_chapter_insights}}
+## [Conversation History]
+{{history_str}}
+## [User Notes]
+{{user_notes}}
+---
+# TASK BLOCK
+{self.task_prompt}
+## [User Message]
+{user_input}
+"""
+        base_tokens = len(tokenizer.encode(fixed_template))
+        remaining_budget = CONTEXT_BUDGET - base_tokens
+
+        # --- 2. Allocate Budget to Dynamic Content ---
+        # Start with the most important context and work down.
+        
+        # User-Selected Text (High Priority)
+        user_selected_text_tokens = int(remaining_budget * 0.4) # 40% of remaining budget
+        truncated_selected_text = self._truncate_text(self.user_selected_text, tokenizer, user_selected_text_tokens)
+        remaining_budget -= len(tokenizer.encode(truncated_selected_text))
+
+        # Conversation History (Medium Priority)
+        history_tokens = int(remaining_budget * 0.5) # 50% of what's left
+        
+        # Truncate history from the beginning
+        truncated_history = self.conversation_history[:]
+        while len(tokenizer.encode("\n".join(truncated_history))) > history_tokens:
+            if not truncated_history: break
+            truncated_history.pop(0)
+        history_str = "\n".join(truncated_history) or "N/A"
+        remaining_budget -= len(tokenizer.encode(history_str))
+
+        # Retrieved Context (Low Priority) - Split remaining budget between the two DBs
+        db_context_tokens = int(remaining_budget * 0.45) # Use 45% of what's left for each DB query
+
+        query_text = user_input or self.user_selected_text
+        
+        retrieved_docs = self.db_handler.query_collection(self.db_handler.already_covered_db, [query_text], n_results=2)
+        retrieved_doc_context = "\n".join(retrieved_docs['documents'][0]) if retrieved_docs and retrieved_docs['documents'] else "N/A"
+        truncated_retrieved_docs = self._truncate_text(retrieved_doc_context, tokenizer, db_context_tokens)
+
+        insights = self.db_handler.query_collection(self.db_handler.current_chapter_insights_db, [query_text], n_results=2)
+        current_chapter_insights = "\n".join(insights['documents'][0]) if insights and insights['documents'] else "N/A"
+        truncated_insights = self._truncate_text(current_chapter_insights, tokenizer, db_context_tokens)
+
+        # --- 3. Assemble the Final Prompt ---
+        final_prompt = fixed_template.format(
+            retrieved_doc_context=truncated_retrieved_docs,
+            user_selected_text=truncated_selected_text or "N/A",
+            current_chapter_insights=truncated_insights,
+            history_str=history_str,
+            user_notes=self.user_notes or "N/A"
+        )
+
+        return final_prompt
+
+    def ask_llm_from_inspector(self, window, system_prompt, user_notes):
+        """Gathers context from the inspector window and sends it to the LLM."""
+        # Update the main app's state from the inspector's text boxes
+        self.system_prompt = system_prompt.strip()
+        self.user_notes = user_notes.strip()
+        
+        user_input = "[Prompt sent from Inspector]"
+        self.add_to_chat(user_input)
+        self.conversation_history.append(user_input)
+
+        # Build the full prompt using the (potentially edited) context
+        final_prompt = self._build_master_prompt(user_input, self.llm_handler.tokenizer)
+        
+        print("--- MASTER PROMPT (Inspector) ---")
+        print(final_prompt)
+        print("---------------------------------")
+
+        # Generate response
+        response = self.llm_handler.generate_response(final_prompt)
+        
+        llm_message = f"LLM: {response}"
+        self.add_to_chat(llm_message)
+        self.conversation_history.append(llm_message)
+        
+        self._capture_insight(response)
         window.destroy()
 
     def initialize_llm(self):
@@ -212,41 +323,63 @@ class TrainerBaseApp:
         if not user_prompt:
             return
 
-        # Add user message to chat and history
         user_message = f"You: {user_prompt}"
         self.add_to_chat(user_message)
         self.conversation_history.append(user_message)
         self.chat_input.delete(0, tk.END)
         
-        # Disable input while generating
         self.chat_input.config(state=tk.DISABLED)
         self.ask_button.config(state=tk.DISABLED)
         self.root.update_idletasks()
 
-        # Reworked prompt for conversational chat
-        chat_prompt = (
-            "You are a friendly and helpful chat assistant. "
-            "Please provide a conversational response to the user's message.\n\n"
-            f"User: {user_prompt}\n"
-            "Assistant:"
-        )
+        # Build the master prompt
+        final_prompt = self._build_master_prompt(user_prompt, self.llm_handler.tokenizer)
 
         # Generate response
-        response = self.llm_handler.generate_response(chat_prompt)
+        response = self.llm_handler.generate_response(final_prompt)
         
-        # Add LLM response to chat and history
         llm_message = f"LLM: {response}"
         self.add_to_chat(llm_message)
         self.conversation_history.append(llm_message)
 
-        # Re-enable input
+        self._capture_insight(response)
+
         self.chat_input.config(state=tk.NORMAL)
         self.ask_button.config(state=tk.NORMAL)
+
+    def _capture_insight(self, insight_text):
+        """Adds the last selected text and the new insight to the databases."""
+        if not self.db_handler or not self.user_selected_text:
+            return
+
+        # Use a hash of the selected text as a simple, unique ID
+        doc_id = f"doc_{hash(self.user_selected_text)}"
+        insight_id = f"insight_{hash(self.user_selected_text)}"
+
+        # Add the original text to the 'already_covered' DB
+        self.db_handler.add_to_collection(
+            self.db_handler.already_covered_db,
+            documents=[self.user_selected_text],
+            metadatas=[{"source": "user_selection"}],
+            ids=[doc_id]
+        )
+
+        # Add the LLM's response to the 'insights' DB
+        self.db_handler.add_to_collection(
+            self.db_handler.current_chapter_insights_db,
+            documents=[insight_text],
+            metadatas=[{"source_doc_id": doc_id}],
+            ids=[insight_id]
+        )
+
+        print(f"Captured insight for document ID: {doc_id}")
+        # Clear the selected text after processing to avoid re-capturing
+        self.user_selected_text = ""
 
     def update_info_panel(self, book, skill, section):
         self.info_text.set(f"Current Book: {book}\nTargeted Skill: {skill}\nCurrent Section: {section}")
 
-    def choose_book(self):
+    def choose_book(self, event=None):
         # Set the initial directory to the 'DocSource' folder
         initial_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "DocSource")
 
@@ -268,11 +401,74 @@ class TrainerBaseApp:
             self.href_map = {}
             self.page_num = 0
             self.epub_chapter_index = 0
+            
+            # Create a book-specific ID
+            book_id = os.path.splitext(os.path.basename(file_path))[0]
+            
+            # Initialize the DB Handler for this specific book
+            self.db_handler = DBHandler(book_id=book_id)
+
+            # Check if the book is already indexed
+            if self.db_handler.full_text_source.count() == 0:
+                self._process_and_index_document(file_path, book_id)
+            else:
+                self.add_to_chat(f"Found existing database for {book_id}. Skipping indexing.")
 
             if file_path.lower().endswith('.pdf'):
                 self.open_pdf(file_path)
             elif file_path.lower().endswith('.epub'):
                 self.open_epub(file_path)
+
+    def _process_and_index_document(self, file_path, book_id):
+        """Extracts text from a document, chunks it, and indexes it in the DB."""
+        self.add_to_chat(f"Indexing {os.path.basename(file_path)}... Please wait.")
+        self.root.update_idletasks()
+
+        documents, metadatas, ids = [], [], []
+        
+        try:
+            if file_path.lower().endswith('.pdf'):
+                with fitz.open(file_path) as doc:
+                    for i, page in enumerate(doc):
+                        # Use get_text("blocks") to approximate paragraphs
+                        blocks = page.get_text("blocks")
+                        for j, block in enumerate(blocks):
+                            text = block[4].strip()
+                            if text: # Ensure block is not just whitespace
+                                documents.append(text)
+                                metadatas.append({"source": book_id, "page_num": i, "block_num": j})
+                                ids.append(f"{book_id}_page_{i}_block_{j}")
+
+            elif file_path.lower().endswith('.epub'):
+                book = epub.read_epub(file_path)
+                for i, item in enumerate(book.get_items_of_type(ITEM_DOCUMENT)):
+                    soup = BeautifulSoup(item.get_content(), 'html.parser')
+                    text = soup.get_text()
+                    if text.strip():
+                        # Chunk by paragraph for EPUB sections
+                        chunks = [chunk.strip() for chunk in text.split('\n\n') if chunk.strip()]
+                        for j, chunk in enumerate(chunks):
+                            documents.append(chunk)
+                            metadatas.append({"source": book_id, "item_num": i, "chunk_num": j})
+                            ids.append(f"{book_id}_item_{i}_chunk_{j}")
+        
+        except Exception as e:
+            self.add_to_chat(f"Error processing document: {e}")
+            return
+
+        if not documents:
+            self.add_to_chat("Could not extract any text chunks from the document.")
+            return
+
+        # Add new data to the full_text_source collection
+        self.db_handler.add_to_collection(
+            self.db_handler.full_text_source,
+            documents=documents,
+            metadatas=metadatas,
+            ids=ids
+        )
+        
+        self.add_to_chat(f"Successfully indexed {len(documents)} text chunks.")
 
     def open_pdf(self, file_path):
         if self.epub_viewer_frame:

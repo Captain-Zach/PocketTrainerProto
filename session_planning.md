@@ -27,3 +27,5 @@ This document outlines the next steps for integrating a local Large Language Mod
 *   Fix left panel layout to ensure bottom buttons are always visible.
 *   Implement token counting and context truncation to manage the 8192 token limit.
 *   Include licensing information in the title screen or home page
+*	Add timer and progress bar to show progress when vbectorizing a book.
+*	Load visuals for teh book before vectorizing, and run vectorization asynchronously
