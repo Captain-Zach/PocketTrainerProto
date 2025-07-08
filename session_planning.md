@@ -24,4 +24,6 @@ This document outlines the next steps for integrating a local Large Language Mod
 
 *   Make the model path configurable instead of being hardcoded.
 *   Investigate GPU acceleration options with the `transformers` library.
-*   
+*   Fix left panel layout to ensure bottom buttons are always visible.
+*   Implement token counting and context truncation to manage the 8192 token limit.
+*   Include licensing information in the title screen or home page

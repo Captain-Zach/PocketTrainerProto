@@ -1,24 +1,48 @@
 # TrainerBase
 
-This is a Python GUI application using PySimpleGUI. It provides a simple mockup window as a starting point for your project.
+**TrainerBase** is a human-in-the-loop training application designed to simultaneously train a human user and create high-quality instructional data for fine-tuning Large Language Models (LLMs). The ultimate goal is to produce QLoRA/LoRA adapters that functionally add new, modular skills and knowledge to any AI Agent built on the same base model.
+
+## Features
+
+-   **Dual-Format Book Viewer:** Load and read both PDF and EPUB files.
+-   **Native EPUB Rendering:** A custom Tkinter-based viewer for clean EPUB presentation.
+-   **PDF Highlighting:** Select and highlight text in PDF documents.
+-   **Integrated LLM Chat:** Interact with a local Gemma model via a chat interface.
+-   **Context Inspector:** A dedicated window to view and modify the context being sent to the LLM.
 
 ## Setup
 
-1. Create and activate the virtual environment (if not already created):
-   ```powershell
-   python -m venv .venv
-   .venv\Scripts\Activate.ps1
-   ```
-2. Install dependencies:
-   ```powershell
-   pip install -r requirements.txt
-   ```
+1.  **Clone the repository:**
+    ```bash
+    git clone <repository-url>
+    cd TrainerBase
+    ```
 
-## Running the App
+2.  **Create and activate a virtual environment:**
+    On Windows:
+    ```powershell
+    python -m venv .venv
+    .venv\Scripts\Activate.ps1
+    ```
+    On macOS/Linux:
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate
+    ```
 
-You can run the GUI with:
-```powershell
-C:/Users/zacha/OneDrive/Desktop/TrainerBase/.venv/Scripts/python.exe main.py
+3.  **Install dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+4.  **Download the Model:**
+    The application is configured to use a local model from the `local_models/` directory. Make sure you have downloaded the model files (e.g., `gemma-3n-E2B-it`) and placed them in `local_models/gemma-3n-E2B-it`.
+    *Note: The `local_models` directory is ignored by Git.*
+
+## Running the Application
+
+To run the TrainerBase GUI, execute the following command from the project's root directory:
+
+```bash
+python main.py
 ```
-
-Or use the VS Code task "Run main.py".

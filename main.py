@@ -28,6 +28,17 @@ class TrainerBaseApp:
         # LLM Handler
         self.llm_handler = None
 
+        # LLM Context State
+        self.system_prompt = "You are an expert AI Tutor. Your goal is to guide the user through the provided document context..."
+        self.user_selected_text = ""
+        self.conversation_history = []
+        self.user_notes = ""
+        self.task_prompt = "Based on all the context above, continue the tutoring session..."
+
+        # Highlighting state
+        self.selection_start = None
+        self.selection_rect = None
+
         # Viewer frames
         self.pdf_viewer_frame = None
         self.epub_viewer_frame = None
@@ -101,15 +112,78 @@ class TrainerBaseApp:
         """
         inspector_window = tk.Toplevel(self.root)
         inspector_window.title("Context Inspector")
-        inspector_window.geometry("600x800")
+        inspector_window.geometry("700x900")
+
+        main_pane = tk.PanedWindow(inspector_window, orient=tk.VERTICAL)
+        main_pane.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # --- System Prompt Frame ---
+        system_frame = tk.LabelFrame(main_pane, text="System Prompt (The AI's Role & Goal)", padx=5, pady=5)
+        main_pane.add(system_frame, height=150)
         
-        tk.Label(inspector_window, text="This window will show the full context sent to the LLM.").pack(padx=10, pady=10)
+        system_prompt_text = scrolledtext.ScrolledText(system_frame, wrap=tk.WORD, height=5)
+        system_prompt_text.pack(fill=tk.BOTH, expand=True)
+        system_prompt_text.insert(tk.END, self.system_prompt)
+
+        # --- Context Block Frame ---
+        context_frame = tk.LabelFrame(main_pane, text="Context Block (The Knowledge Base)", padx=5, pady=5)
+        main_pane.add(context_frame)
+
+        context_pane = tk.PanedWindow(context_frame, orient=tk.VERTICAL)
+        context_pane.pack(fill=tk.BOTH, expand=True)
+
+        # Selected Text
+        selected_text_frame = tk.LabelFrame(context_pane, text="User-Selected Text", padx=5, pady=5)
+        context_pane.add(selected_text_frame, height=150)
+        selected_text = scrolledtext.ScrolledText(selected_text_frame, wrap=tk.WORD, height=5, state=tk.DISABLED)
+        selected_text.pack(fill=tk.BOTH, expand=True)
+        selected_text.config(state=tk.NORMAL)
+        selected_text.insert(tk.END, self.user_selected_text or "No text selected.")
+        selected_text.config(state=tk.DISABLED)
+
+
+        # Conversation History
+        history_frame = tk.LabelFrame(context_pane, text="Conversation History", padx=5, pady=5)
+        context_pane.add(history_frame, height=150)
+        history_text = scrolledtext.ScrolledText(history_frame, wrap=tk.WORD, height=5, state=tk.DISABLED)
+        history_text.pack(fill=tk.BOTH, expand=True)
+        history_text.config(state=tk.NORMAL)
+        history_str = "\n".join(self.conversation_history)
+        history_text.insert(tk.END, history_str or "No history yet.")
+        history_text.config(state=tk.DISABLED)
+
+        # User Notes
+        notes_frame = tk.LabelFrame(context_pane, text="User Notes (Add specific instructions for the next turn)", padx=5, pady=5)
+        context_pane.add(notes_frame, height=100)
+        user_notes_text = scrolledtext.ScrolledText(notes_frame, wrap=tk.WORD, height=4)
+        user_notes_text.pack(fill=tk.BOTH, expand=True)
+        user_notes_text.insert(tk.END, self.user_notes)
+
+        # --- Task Frame ---
+        task_frame = tk.LabelFrame(main_pane, text="Task (The Immediate Action)", padx=5, pady=5)
+        main_pane.add(task_frame, height=100)
         
-        # We will add the detailed text boxes here in the next step.
+        task_text = scrolledtext.ScrolledText(task_frame, wrap=tk.WORD, height=3)
+        task_text.pack(fill=tk.BOTH, expand=True)
+        task_text.insert(tk.END, self.task_prompt)
+        task_text.config(state=tk.DISABLED)
+
+        # --- Bottom Buttons ---
+        button_frame = tk.Frame(inspector_window)
+        button_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
         
-        inspector_window.transient(self.root) # Keep window on top
-        inspector_window.grab_set() # Modal behavior
-        self.root.wait_window(inspector_window) # Wait until closed
+        tk.Button(button_frame, text="Send to LLM", command=lambda: self.ask_llm_from_inspector(inspector_window)).pack(side=tk.RIGHT, padx=5)
+        tk.Button(button_frame, text="Close", command=inspector_window.destroy).pack(side=tk.RIGHT)
+
+        inspector_window.transient(self.root)
+        inspector_window.grab_set()
+        self.root.wait_window(inspector_window)
+
+    def ask_llm_from_inspector(self, window):
+        # This is a placeholder for now. We will implement the logic to
+        # gather text from the inspector window and send it to the LLM.
+        print("Sending prompt from inspector...")
+        window.destroy()
 
     def initialize_llm(self):
         self.add_to_chat("Initializing LLM... This may take a moment.")
@@ -137,8 +211,11 @@ class TrainerBaseApp:
         user_prompt = self.chat_input.get()
         if not user_prompt:
             return
-        
-        self.add_to_chat(f"You: {user_prompt}")
+
+        # Add user message to chat and history
+        user_message = f"You: {user_prompt}"
+        self.add_to_chat(user_message)
+        self.conversation_history.append(user_message)
         self.chat_input.delete(0, tk.END)
         
         # Disable input while generating
@@ -156,7 +233,11 @@ class TrainerBaseApp:
 
         # Generate response
         response = self.llm_handler.generate_response(chat_prompt)
-        self.add_to_chat(f"LLM: {response}")
+        
+        # Add LLM response to chat and history
+        llm_message = f"LLM: {response}"
+        self.add_to_chat(llm_message)
+        self.conversation_history.append(llm_message)
 
         # Re-enable input
         self.chat_input.config(state=tk.NORMAL)
@@ -203,6 +284,11 @@ class TrainerBaseApp:
             self.pdf_viewer_frame.pack(fill=tk.BOTH, expand=True)
             self.canvas = tk.Canvas(self.pdf_viewer_frame)
             self.canvas.pack(fill=tk.BOTH, expand=True)
+            # Bind mouse events for highlighting
+            self.canvas.bind("<ButtonPress-1>", self.start_selection)
+            self.canvas.bind("<B1-Motion>", self.update_selection)
+            self.canvas.bind("<ButtonRelease-1>", self.end_selection)
+            self.canvas.bind("<Button-3>", self.remove_highlight) # Right-click
         
         self.pdf_viewer_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -237,6 +323,54 @@ class TrainerBaseApp:
         
         self.update_info_panel(os.path.basename(self.doc.name), "Reading", f"Page {self.page_num + 1} of {self.doc.page_count}")
         self.update_navigation_buttons()
+
+    def start_selection(self, event):
+        self.selection_start = (event.x, event.y)
+        self.selection_rect = self.canvas.create_rectangle(event.x, event.y, event.x, event.y, outline='red', width=1, dash=(4, 4))
+
+    def update_selection(self, event):
+        if self.selection_rect:
+            x0, y0 = self.selection_start
+            x1, y1 = event.x, event.y
+            self.canvas.coords(self.selection_rect, x0, y0, x1, y1)
+
+    def end_selection(self, event):
+        if self.selection_start:
+            x0, y0 = self.selection_start
+            x1, y1 = event.x, event.y
+            self.selection_start = None
+            if self.selection_rect:
+                self.canvas.delete(self.selection_rect)
+                self.selection_rect = None
+
+            rect_coords = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+            
+            if self.doc:
+                page = self.doc.load_page(self.page_num)
+                fitz_rect = fitz.Rect(rect_coords)
+                
+                # Extract text and update context variable
+                extracted_text = page.get_text("text", clip=fitz_rect).strip()
+                if extracted_text:
+                    self.user_selected_text = extracted_text
+                    print(f"Context Updated: Selected text of {len(extracted_text)} chars.")
+                
+                # Add the visual highlight to the page
+                page.add_highlight_annot(fitz_rect)
+                self.display_page() # Redraw the page to show the new highlight
+
+    def remove_highlight(self, event):
+        if not self.doc:
+            return
+        click_point = fitz.Point(event.x, event.y)
+        page = self.doc.load_page(self.page_num)
+        annots = page.annots()
+        if annots:
+            for annot in annots:
+                if click_point in annot.rect:
+                    page.delete_annot(annot)
+                    self.display_page() # Redraw the page to remove the highlight
+                    break
 
     def next_page(self):
         if self.doc: # PDF navigation
@@ -276,7 +410,10 @@ class TrainerBaseApp:
             self.pdf_viewer_frame = None
 
         if not self.epub_viewer_frame:
-            self.epub_viewer_frame = NativeEpubViewer(self.right_frame)
+            self.epub_viewer_frame = NativeEpubViewer(
+                self.right_frame, 
+                selection_callback=self.update_epub_selection_context
+            )
             self.epub_viewer_frame.pack(fill=tk.BOTH, expand=True)
         
         try:
@@ -310,6 +447,13 @@ class TrainerBaseApp:
             self.epub_book = None
         
         self.update_navigation_buttons()
+
+    def update_epub_selection_context(self, selected_text):
+        """
+        Callback function for the NativeEpubViewer to update the selected text context.
+        """
+        self.user_selected_text = selected_text
+        print(f"Context Updated: Selected EPUB text of {len(selected_text)} chars.")
 
     def display_epub_chapter(self, chapter_index):
         if not self.epub_chapters:
